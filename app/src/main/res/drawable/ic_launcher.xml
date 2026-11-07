@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icono: cabeza de palito vista desde arriba con brazos y arma -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#3A3E46"
+        android:pathData="M54,4a50,50 0,1 1,0 100a50,50 0,1 1,0 -100z" />
+    <!-- arma -->
+    <path android:strokeColor="#16161A" android:strokeWidth="9"
+        android:pathData="M60,54 L94,54" />
+    <path android:strokeColor="#FFE08A" android:strokeWidth="3"
+        android:pathData="M60,54 L94,54" />
+    <!-- brazos -->
+    <path android:strokeColor="#50B4FF" android:strokeWidth="6"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M44,36 L60,30 L72,50" />
+    <path android:strokeColor="#50B4FF" android:strokeWidth="6"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M44,72 L62,78 L80,56" />
+    <!-- cabeza -->
+    <path android:fillColor="#242428" android:strokeColor="#50B4FF" android:strokeWidth="6"
+        android:pathData="M42,36a18,18 0,1 1,0 36a18,18 0,1 1,0 -36z" />
+</vector>
