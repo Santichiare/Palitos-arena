@@ -21,6 +21,8 @@
 const MW = 2200, MH = 1400;          // tamaño del mapa
 const R = 17;                        // radio de los personajes
 const SPEED = 265;
+const CAM_PAD_X = .3, CAM_PAD_Y = .32;  // cuánto se puede pasar la cámara del borde (fracción de pantalla)
+const VIEW_W = 1520, VIEW_H = 855;   // cuánto mapa se ve (más grande = cámara más lejos)
 const SABLE_TIME = 10;               // segundos que dura el sable
 const SABLE_SPIN = 16;               // velocidad de giro (radianes/seg)
 const SABLE_HIT_CD = .45;            // cada cuánto le puede volver a pegar al mismo enemigo
@@ -38,13 +40,15 @@ const cam = {x:0, y:0};
 function resize(){
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
-  scale = Math.sqrt(innerWidth * innerHeight / (1280 * 720));
+  scale = Math.sqrt(innerWidth * innerHeight / (VIEW_W * VIEW_H));
   vw = innerWidth / scale; vh = innerHeight / scale;
   hs = Math.max(0.72, Math.min(1.4, scale)); hw = innerWidth / hs; hh = innerHeight / hs;
 }
 addEventListener('resize', resize); resize();
 const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
-const angDiff = (a,b) => ((a - b + Math.PI*3) % (Math.PI*2)) - Math.PI;
+const TAU = Math.PI*2;
+const normAng = a => { a %= TAU; if(a > Math.PI) a -= TAU; if(a < -Math.PI) a += TAU; return a; };
+const angDiff = (a,b) => normAng(a - b);   // funciona con ángulos de cualquier tamaño
 
 // ================= mapa (simétrico) =================
 const quarter = [
@@ -285,8 +289,8 @@ function updateSable(p, dt){
   if(p.weapon !== 'sable') return;
   const wp = WEAPONS.sable;
   p.sableT -= dt;
-  if(p.sableT <= 0){ p.weapon = 'pistola'; p.ammo = Infinity; p.sableT = 0; return; }
-  p.spinAng = (p.spinAng || p.ang) + SABLE_SPIN*dt;
+  if(p.sableT <= 0){ p.weapon = 'pistola'; p.ammo = Infinity; p.sableT = 0; p.ang = normAng(p.ang); return; }
+  p.spinAng = normAng((p.spinAng || p.ang) + SABLE_SPIN*dt);
   p.ang = p.spinAng;
   const dmg = Math.round(wp.dmg * (p.bot ? BOT_DMG : PLAYER_DMG));
   const now = performance.now()/1000;
@@ -323,7 +327,7 @@ function updateSwing(p, dt){
     if(wp.push){ q.vx += Math.cos(a)*wp.push*2.2; q.vy += Math.sin(a)*wp.push*2.2; moveCircle(q, Math.cos(a)*22, Math.sin(a)*22); }
     hurt(q, dmg, p);
   }
-  if(p.swingT <= 0){ p.swingT = 0; if(wp.melee==='swing') p.ang = p.swingStart; }
+  if(p.swingT <= 0){ p.swingT = 0; p.ang = normAng(wp.melee==='swing' ? p.swingStart : p.ang); }
 }
 function kill(victim, killer){
   victim.dead = true; victim.rt = 2.2; victim.deaths++;
@@ -477,6 +481,15 @@ function update(dt){
 const font = (sz, w='bold') => `${w} ${sz}px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif`;
 function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x,y,w,h,r) : ctx.rect(x,y,w,h); }
 function panel(x,y,w,h){ ctx.fillStyle='rgba(10,12,16,.62)'; rr(x,y,w,h,10); ctx.fill(); }
+function drawOutside(){
+  ctx.fillStyle='#1b1e23'; ctx.fillRect(cam.x-10, cam.y-10, vw+20, vh+20);
+  ctx.strokeStyle='#22262c'; ctx.lineWidth=10;
+  ctx.beginPath();
+  const x0 = Math.floor((cam.x-vh)/60)*60;
+  for(let x=x0; x<cam.x+vw+60; x+=60){ ctx.moveTo(x, cam.y-10); ctx.lineTo(x+vh+20, cam.y+vh+10); }
+  ctx.stroke();
+  ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fillRect(-14,-14,MW+28,MH+28);
+}
 function drawFloor(){
   const x0 = Math.max(0, Math.floor(cam.x/40)*40), y0 = Math.max(0, Math.floor(cam.y/40)*40);
   const x1 = Math.min(MW, cam.x+vw+40), y1 = Math.min(MH, cam.y+vh+40);
@@ -582,7 +595,8 @@ function drawMinimap(x, y, w){
   for(const k of pickups){ ctx.fillStyle=WEAPONS[k.w].col; ctx.fillRect(x+k.x*sx-2, y+k.y*sx-2, 4, 4); }
   for(const p of players){ if(p.dead) continue; ctx.fillStyle=p.col; ctx.beginPath(); ctx.arc(x+p.x*sx, y+p.y*sx, p===me?4.5:3.5, 0, 7); ctx.fill(); }
   ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=1;
-  ctx.strokeRect(x+cam.x*sx, y+cam.y*sx, Math.min(vw,MW)*sx, Math.min(vh,MH)*sx);
+  const rx0 = Math.max(0,cam.x), ry0 = Math.max(0,cam.y), rx1 = Math.min(MW,cam.x+vw), ry1 = Math.min(MH,cam.y+vh);
+  ctx.strokeRect(x+rx0*sx, y+ry0*sx, (rx1-rx0)*sx, (ry1-ry0)*sx);
   return h;
 }
 function drawHUD(){
@@ -670,13 +684,15 @@ function frame(now){
     const tx = me.x - vw/2, ty = me.y - vh/2;
     cam.x += (tx - cam.x)*Math.min(1, dt*8); cam.y += (ty - cam.y)*Math.min(1, dt*8);
   }
-  cam.x = vw >= MW ? (MW-vw)/2 : clamp(cam.x, 0, MW-vw);
-  cam.y = vh >= MH ? (MH-vh)/2 : clamp(cam.y, 0, MH-vh);
+  // la cámara puede pasarse del borde del mapa para que en las esquinas no quedes tapado por el HUD
+  const padX = state==='menu' ? 0 : vw*CAM_PAD_X, padY = state==='menu' ? 0 : vh*CAM_PAD_Y;
+  cam.x = vw >= MW + padX*2 ? (MW-vw)/2 : clamp(cam.x, -padX, MW-vw+padX);
+  cam.y = vh >= MH + padY*2 ? (MH-vh)/2 : clamp(cam.y, -padY, MH-vh+padY);
 
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.fillStyle='#16181c'; ctx.fillRect(0,0,innerWidth,innerHeight);
   ctx.setTransform(dpr*scale,0,0,dpr*scale,-cam.x*dpr*scale,-cam.y*dpr*scale);
-  drawFloor(); drawWalls();
+  drawOutside(); drawFloor(); drawWalls();
 
   if(state!=='menu'){
     for(const k of pickups) drawPickup(k, t);
