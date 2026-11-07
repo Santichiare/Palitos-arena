@@ -133,8 +133,11 @@ const WEAPONS = {
   metralleta: {name:'METRALLETA', dmg:10, rate:.09, speed:1000, spread:.09, pellets:1, ammo:45, col:'#8cff8c', len:36},
   rifle:      {name:'RIFLE',      dmg:75, rate:1.1, speed:1800, spread:0,   pellets:1, ammo:6,  col:'#78c8ff', len:48},
   laser:      {name:'LÁSER',      dmg:34, rate:.28, speed:1500, spread:.01, pellets:1, ammo:16, col:'#ff50c8', len:40},
+  // cuerpo a cuerpo: pegan más que cualquier arma de distancia y se conservan hasta morir
+  sable:      {name:'SABLE', melee:'spin',  dmg:80, rate:.75, dur:.42, range:86, ammo:Infinity, col:'#5ef0ff', len:58},
+  bate:       {name:'BATE',  melee:'swing', dmg:95, rate:.6,  dur:.24, range:66, arc:1.25, push:240, ammo:Infinity, col:'#d29a5a', len:42},
 };
-const PICK_TYPES = ['escopeta','escopeta','metralleta','metralleta','rifle','laser'];
+const PICK_TYPES = ['escopeta','escopeta','metralleta','metralleta','rifle','laser','sable','bate'];
 let pickups = [], pickupTimers = [];
 function placePickup(){
   let best = null, bs = -1;
@@ -150,7 +153,7 @@ function placePickup(){
 }
 
 // ================= jugadores =================
-function mkPlayer(name,col,bot){ return {name,col,bot,x:0,y:0,vx:0,vy:0,ang:0,hp:100,weapon:'pistola',ammo:Infinity,cool:0,kills:0,deaths:0,dead:false,rt:0,path:null,pi:0,repath:0,aimErr:0,strafe:1,strafeT:0,seeT:0,blockT:0,lastSeen:null,hitT:0,flash:0}; }
+function mkPlayer(name,col,bot){ return {name,col,bot,x:0,y:0,vx:0,vy:0,ang:0,hp:100,weapon:'pistola',ammo:Infinity,cool:0,kills:0,deaths:0,dead:false,rt:0,path:null,pi:0,repath:0,aimErr:0,strafe:1,strafeT:0,seeT:0,blockT:0,lastSeen:null,hitT:0,flash:0,swingT:0,swingDur:0,swingStart:0,swingHit:null}; }
 let players = null, me, bullets, feed, floaters, sparks, timeLeft, state = 'menu';
 function spawn(p){
   let best = null, bd = -1;
@@ -161,7 +164,7 @@ function spawn(p){
     md += Math.random()*150;
     if(md > bd){ bd = md; best = s; }
   }
-  Object.assign(p,{x:best.x,y:best.y,vx:0,vy:0,hp:100,dead:false,weapon:'pistola',ammo:Infinity,cool:.4,path:null,lastSeen:null});
+  Object.assign(p,{swingT:0,x:best.x,y:best.y,vx:0,vy:0,hp:100,dead:false,weapon:'pistola',ammo:Infinity,cool:.4,path:null,lastSeen:null});
 }
 function newGame(){
   players = [
@@ -248,9 +251,20 @@ function assistTarget(p){
   }
   return best;
 }
+function hurt(victim, dmg, attacker){
+  victim.hp -= dmg; victim.hitT = .12;
+  floaters.push({x:victim.x+14,y:victim.y-30,txt:'-'+dmg,t:.7,mine:attacker===me});
+  if(victim.hp <= 0) kill(victim, attacker);
+}
 function shoot(p){
   const wp = WEAPONS[p.weapon];
-  if(p.cool > 0 || p.dead) return;
+  if(p.cool > 0 || p.dead || p.swingT > 0) return;
+  if(wp.melee){
+    p.cool = wp.rate * (p.bot ? 1.3 : 1);
+    if(!p.bot && wp.melee==='swing'){ const t = assistTarget(p); if(t) p.ang = Math.atan2(t.y-p.y, t.x-p.x); }
+    p.swingT = p.swingDur = wp.dur; p.swingStart = p.ang; p.swingHit = new Set();
+    return;
+  }
   p.cool = wp.rate * (p.bot ? 1.5 : 1);
   if(!p.bot){ const t = assistTarget(p); if(t) p.ang = Math.atan2(t.y-p.y, t.x-p.x); }
   const gx = p.x + Math.cos(p.ang)*(26+wp.len), gy = p.y + Math.sin(p.ang)*(26+wp.len);
@@ -262,6 +276,29 @@ function shoot(p){
   }
   p.flash = .06;
   if(p.ammo !== Infinity){ p.ammo--; if(p.ammo <= 0){ p.weapon='pistola'; p.ammo=Infinity; } }
+}
+function updateSwing(p, dt){
+  if(p.swingT <= 0) return;
+  const wp = WEAPONS[p.weapon];
+  if(!wp.melee){ p.swingT = 0; return; }
+  p.swingT -= dt;
+  const prog = clamp(1 - p.swingT/p.swingDur, 0, 1);
+  p.ang = wp.melee==='spin' ? p.swingStart + prog*Math.PI*2 : p.swingStart - wp.arc + prog*wp.arc*2;
+  const dmg = Math.round(wp.dmg * (p.bot ? BOT_DMG : PLAYER_DMG));
+  for(const q of players){
+    if(q===p || q.dead || p.swingHit.has(q)) continue;
+    const d = Math.hypot(q.x-p.x, q.y-p.y);
+    if(d > wp.range + R) continue;
+    const a = Math.atan2(q.y-p.y, q.x-p.x);
+    if(wp.melee==='spin'){ if(Math.abs(angDiff(a, p.ang)) > .9 && prog < .95) continue; }   // le pega cuando el sable pasa
+    else if(Math.abs(angDiff(a, p.swingStart)) > wp.arc + .3) continue;
+    if(!los(p.x,p.y,q.x,q.y)) continue;
+    p.swingHit.add(q);
+    for(let i=0;i<8;i++){ const sa=a+(Math.random()-.5)*1.4, sp=120+Math.random()*160; sparks.push({x:q.x-Math.cos(a)*R,y:q.y-Math.sin(a)*R,vx:Math.cos(sa)*sp,vy:Math.sin(sa)*sp,t:.25,col:wp.col}); }
+    if(wp.push){ q.vx += Math.cos(a)*wp.push*2.2; q.vy += Math.sin(a)*wp.push*2.2; moveCircle(q, Math.cos(a)*22, Math.sin(a)*22); }
+    hurt(q, dmg, p);
+  }
+  if(p.swingT <= 0){ p.swingT = 0; if(wp.melee==='swing') p.ang = p.swingStart; }
 }
 function kill(victim, killer){
   victim.dead = true; victim.rt = 2.2; victim.deaths++;
@@ -301,11 +338,18 @@ function botThink(p, dt){
     const want = dir + p.aimErr;
     const da = angDiff(want, p.ang);
     p.ang += clamp(da, -7*dt, 7*dt);
-    if(Math.abs(da) < .18 && p.seeT > .7) shoot(p);
-    const ideal = p.weapon==='escopeta' ? 130 : p.weapon==='rifle' ? 450 : 280;
-    const fwd = td > ideal*1.15 ? 1 : td < ideal*.6 ? -.7 : 0;
-    let mx = Math.cos(dir)*fwd - Math.sin(dir)*p.strafe*.8;
-    let my = Math.sin(dir)*fwd + Math.cos(dir)*p.strafe*.8;
+    const wpn = WEAPONS[p.weapon];
+    let fwd, st = .8;
+    if(wpn.melee){
+      if(td < wpn.range + R - 4 && p.seeT > .35 && (wpn.melee==='spin' || Math.abs(da) < .5)) shoot(p);
+      fwd = td > 40 ? 1 : 0; st = .25;
+    } else {
+      if(Math.abs(da) < .18 && p.seeT > .7) shoot(p);
+      const ideal = p.weapon==='escopeta' ? 130 : p.weapon==='rifle' ? 450 : 280;
+      fwd = td > ideal*1.15 ? 1 : td < ideal*.6 ? -.7 : 0;
+    }
+    let mx = Math.cos(dir)*fwd - Math.sin(dir)*p.strafe*st;
+    let my = Math.sin(dir)*fwd + Math.cos(dir)*p.strafe*st;
     const m = Math.hypot(mx,my) || 1;
     return {x:mx/m, y:my/m};
   }
@@ -357,6 +401,8 @@ function update(dt){
     p.vx += (v.x*SPEED - p.vx)*k; p.vy += (v.y*SPEED - p.vy)*k;
     const ox = p.x, oy = p.y, want = Math.hypot(p.vx,p.vy)*dt;
     moveCircle(p, p.vx*dt, p.vy*dt);
+    updateSwing(p, dt);
+    if(p.dead) continue;
     if(p.bot){
       const got = Math.hypot(p.x-ox, p.y-oy);
       if(want > 1 && got < want*.35){ p.blockT += dt; } else p.blockT = 0;
@@ -381,9 +427,8 @@ function update(dt){
       for(const p of players){
         if(p===b.owner || p.dead) continue;
         if(Math.hypot(p.x-b.x,p.y-b.y) < R+2){
-          p.hp -= b.dmg; p.hitT = .12; b.life = 0;
-          floaters.push({x:p.x+14,y:p.y-30,txt:'-'+b.dmg,t:.7,mine:b.owner===me});
-          if(p.hp <= 0) kill(p, b.owner);
+          b.life = 0;
+          hurt(p, b.dmg, b.owner);
           break;
         }
       }
@@ -430,8 +475,14 @@ function drawPickup(k, t){
   ctx.strokeStyle = wp.col; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(0,0,22,0,7); ctx.stroke();
   ctx.fillStyle = wp.col+'40'; ctx.beginPath(); ctx.arc(0,0,15,0,7); ctx.fill();
-  ctx.fillStyle = wp.col; ctx.fillRect(-10,-3,20,5); ctx.fillRect(-10,2,5,7);
-  ctx.font=font(11); ctx.textAlign='center'; ctx.fillText(wp.name, 0, 40);
+  if(wp.melee==='spin'){
+    ctx.lineCap='round'; ctx.strokeStyle=wp.col; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(-6,6); ctx.lineTo(10,-10); ctx.stroke();
+    ctx.strokeStyle='#ddd'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(-11,11); ctx.lineTo(-6,6); ctx.stroke();
+  } else if(wp.melee==='swing'){
+    ctx.lineCap='round'; ctx.strokeStyle=wp.col; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(-10,10); ctx.lineTo(0,0); ctx.stroke();
+    ctx.lineWidth=7; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(8,-8); ctx.stroke();
+  } else { ctx.fillStyle = wp.col; ctx.fillRect(-10,-3,20,5); ctx.fillRect(-10,2,5,7); }
+  ctx.fillStyle = wp.col; ctx.font=font(11); ctx.textAlign='center'; ctx.fillText(wp.name, 0, 40);
   ctx.restore();
 }
 function drawStick(p){
@@ -447,8 +498,29 @@ function drawStick(p){
   ctx.beginPath(); ctx.moveTo(...ls); ctx.lineTo(...e1); ctx.lineTo(...h1); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(...rs); ctx.lineTo(...e2); ctx.lineTo(...h2); ctx.stroke();
   ctx.lineCap='butt';
-  ctx.strokeStyle='#16161a'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...g1); ctx.stroke();
-  ctx.strokeStyle=wp.col; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...g1); ctx.stroke();
+  if(wp.melee){
+    const reach = 27 + wp.len;
+    if(p.swingT > 0){ // estela del golpe
+      const a1 = p.ang, a0 = wp.melee==='spin' ? p.ang - Math.min(2.4, (1 - p.swingT/p.swingDur)*Math.PI*2) : p.swingStart - wp.arc;
+      ctx.strokeStyle = wp.col + '55'; ctx.lineWidth = 22;
+      ctx.beginPath(); a1 >= a0 ? ctx.arc(p.x,p.y,reach-12,a0,a1) : ctx.arc(p.x,p.y,reach-12,a1,a0); ctx.stroke();
+    }
+    if(wp.melee==='spin'){
+      ctx.lineCap='round';
+      ctx.strokeStyle=wp.col+'66'; ctx.lineWidth=10; ctx.beginPath(); ctx.moveTo(...h2); ctx.lineTo(...g1); ctx.stroke();
+      ctx.strokeStyle='#f4feff'; ctx.lineWidth=3.5; ctx.beginPath(); ctx.moveTo(...h2); ctx.lineTo(...g1); ctx.stroke();
+      ctx.strokeStyle='#bbb'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...h2); ctx.stroke();
+    } else {
+      ctx.lineCap='round'; ctx.strokeStyle='#3a2a1a'; ctx.lineWidth=9; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...g1); ctx.stroke();
+      ctx.strokeStyle=wp.col; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...g1); ctx.stroke();
+      const m = [g0[0]*.45+g1[0]*.55, g0[1]*.45+g1[1]*.55];
+      ctx.lineWidth=9; ctx.beginPath(); ctx.moveTo(...m); ctx.lineTo(...g1); ctx.stroke();
+    }
+    ctx.lineCap='butt';
+  } else {
+    ctx.strokeStyle='#16161a'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...g1); ctx.stroke();
+    ctx.strokeStyle=wp.col; ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(...g0); ctx.lineTo(...g1); ctx.stroke();
+  }
   ctx.fillStyle=col;
   for(const h of [h1,h2]){ ctx.beginPath(); ctx.arc(h[0],h[1],4.5,0,7); ctx.fill(); }
   if(p.flash>0){ ctx.fillStyle='#ffe678'; ctx.beginPath(); ctx.arc(g1[0]+ca*6,g1[1]+sa*6,8,0,7); ctx.fill(); }
@@ -604,8 +676,8 @@ function frame(now){
     drawOverlay('PALITOS: ARENA','Shooter de palitos visto desde arriba · vos contra 3 bots · 3 minutos', cy => {
       ctx.font=font(16,'normal'); ctx.fillStyle='#96a0af';
       const lines = isTouch
-        ? ['Joystick izquierdo: moverte','Joystick derecho: apuntar (si lo empujás a fondo, disparás)','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas']
-        : ['WASD o flechas: moverte','Mouse: apuntar · Clic: disparar','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas'];
+        ? ['Joystick izquierdo: moverte','Joystick derecho: apuntar (si lo empujás a fondo, disparás)','Sable y bate: pegan fuerte de cerca. El sable te hace girar y le pega a todos alrededor','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas']
+        : ['WASD o flechas: moverte','Mouse: apuntar · Clic: disparar','Sable y bate: pegan fuerte de cerca. El sable te hace girar y le pega a todos alrededor','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas'];
       lines.forEach((l,i)=>ctx.fillText(l, hw/2, cy+i*28));
     });
   } else {
