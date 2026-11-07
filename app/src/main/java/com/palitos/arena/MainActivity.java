@@ -53,8 +53,18 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        // Atrás: pausa la partida; en el menú, sale de la app
+        web.evaluateJavascript("window.palitosBack ? window.palitosBack() : 'exit'", value -> {
+            if ("\"exit\"".equals(value)) finish();
+        });
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
+        web.evaluateJavascript("window.palitosAutoPause && window.palitosAutoPause()", null);
         web.onPause();
     }
 

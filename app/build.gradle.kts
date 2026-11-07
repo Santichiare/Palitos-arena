@@ -10,8 +10,8 @@ android {
         applicationId = "com.palitos.arena"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
     }
 
     // Misma firma en todas las compilaciones, así cada APK nuevo se instala encima del anterior

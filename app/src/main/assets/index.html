@@ -675,7 +675,7 @@ function newGame(){
 
 // ================= controles =================
 const keys = {};
-addEventListener('keydown', e => { if(e.key.toLowerCase()==='m' && !e.repeat){ SFX.init(); SFX.toggle(); } keys[e.key.toLowerCase()] = true; if(state!=='play' && e.key==='Enter') newGame(); if(state==='over' && e.key==='Escape') goMenu(); });
+addEventListener('keydown', e => { if(e.key.toLowerCase()==='m' && !e.repeat){ SFX.init(); SFX.toggle(); } keys[e.key.toLowerCase()] = true; if((state==='menu' || state==='over') && e.key==='Enter') newGame(); if(state==='over' && e.key==='Escape') goMenu(); else if(!e.repeat && (e.key==='Escape' || e.key.toLowerCase()==='p')){ if(state==='play'){ state='paused'; SFX.hum(false); mouse.down=false; } else if(state==='paused'){ state='play'; last=performance.now(); } } });
 addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 const mouse = {sx:0,sy:0,down:false,used:false};
 const mouseWorld = () => ({x: cam.x + mouse.sx/scale, y: cam.y + mouse.sy/scale});
@@ -1205,6 +1205,9 @@ function drawHUD(){
     ctx.beginPath(); ctx.arc(x+18, y+18, 8, 0, TAU); ctx.moveTo(x+24, y+24); ctx.lineTo(x+31, y+31); ctx.stroke();
     ctx.fillStyle = '#e6e6e6'; ctx.font = font(10); ctx.textAlign = 'center'; ctx.fillText(zoomInfo().name[0], x+18, y+22);
   });
+  button(hw/2+180, 20, 42, 42, () => { state = 'paused'; SFX.hum(false); sticks.move = sticks.aim = null; mouse.down = false; }, (x, y, w, h) => {
+    panel(x, y, w, h); ctx.fillStyle = '#e6e6e6'; ctx.fillRect(x+14, y+12, 5, 18); ctx.fillRect(x+23, y+12, 5, 18);
+  });
   panel(hw/2-70,20,140,42);
   ctx.fillStyle='#fff'; ctx.font=font(22); ctx.textAlign='center'; ctx.fillText(fmt(timeLeft),hw/2,49);
 
@@ -1290,6 +1293,15 @@ function drawMenu(){
   pillBtn(hw/2 - 120, zy + 64, 240, 56, 'JUGAR', true, () => newGame(), true);
   ctx.font = font(12,'normal'); ctx.fillStyle = '#7d8796'; ctx.textAlign = 'center';
   ctx.fillText(isTouch ? 'Joystick izquierdo: moverte · Joystick derecho: apuntar (a fondo dispara)' : 'WASD: moverte · Mouse: apuntar · Clic: disparar · M: sonido', hw/2, zy + 146);
+}
+function drawPause(){
+  ctx.fillStyle = 'rgba(10,12,16,.75)'; ctx.fillRect(0,0,hw,hh);
+  const oy = hh/2 - 120;
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = font(52,'900'); ctx.fillText('PAUSA', hw/2, oy+40);
+  ctx.font = font(15,'normal'); ctx.fillStyle = '#b8c0cc'; ctx.fillText('Mapa: ' + MAPS[mapId].name + ' · quedan ' + fmt(timeLeft), hw/2, oy+74);
+  pillBtn(hw/2 - 120, oy + 100, 240, 56, 'CONTINUAR', true, () => { state = 'play'; last = performance.now(); }, true);
+  pillBtn(hw/2 - 120, oy + 170, 240, 50, 'REINICIAR', false, () => newGame());
+  pillBtn(hw/2 - 120, oy + 232, 240, 50, 'SALIR AL MENÚ', false, () => goMenu());
 }
 function drawGameOver(){
   ctx.fillStyle = 'rgba(10,12,16,.8)'; ctx.fillRect(0,0,hw,hh);
@@ -1402,12 +1414,23 @@ function frame(now){
       ctx.fillText('Reaparecés en '+Math.ceil(me.rt)+'…', hw/2, hh/2);
     }
     if(state==='over') drawGameOver();
+    if(state==='paused') drawPause();
   }
   ctx.setTransform(dpr,0,0,dpr,0,0);
   drawSticksScreen();
   requestAnimationFrame(frame);
 }
 cv.style.cursor = 'none';
+// botón "atrás" de Android (lo llama la app): pausa / vuelve / sale
+window.palitosAutoPause = () => { if(state === 'play'){ state = 'paused'; SFX.hum(false); sticks.move = sticks.aim = null; mouse.down = false; } };
+document.addEventListener('visibilitychange', () => { if(document.hidden) window.palitosAutoPause(); });
+window.palitosBack = () => {
+  if(state === 'menu') return 'exit';
+  if(state === 'play'){ state = 'paused'; SFX.hum(false); sticks.move = sticks.aim = null; mouse.down = false; }
+  else if(state === 'paused'){ state = 'play'; last = performance.now(); }
+  else if(state === 'over') goMenu();
+  return 'ok';
+};
 loadMap(settings.map); makeThumbs();
 requestAnimationFrame(frame);
 })();
