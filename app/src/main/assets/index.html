@@ -20,7 +20,11 @@
 // ================= config =================
 const MW = 2200, MH = 1400;          // tamaño del mapa
 const R = 17;                        // radio de los personajes
-const SPEED = 220;
+const SPEED = 265;
+const SABLE_TIME = 10;               // segundos que dura el sable
+const SABLE_SPIN = 16;               // velocidad de giro (radianes/seg)
+const SABLE_HIT_CD = .45;            // cada cuánto le puede volver a pegar al mismo enemigo
+const REGEN_DELAY = 3, REGEN_RATE = 12; // la vida se recarga 12/seg después de 3 seg sin recibir daño
 const PLAYER_DMG = 1.3;              // daño de tus armas (130%)
 const BOT_DMG = 0.45;                // daño de los bots (45%)
 const ASSIST_TOUCH = 0.30, ASSIST_MOUSE = 0.12; // ayuda de puntería (radianes)
@@ -134,7 +138,7 @@ const WEAPONS = {
   rifle:      {name:'RIFLE',      dmg:75, rate:1.1, speed:1800, spread:0,   pellets:1, ammo:6,  col:'#78c8ff', len:48},
   laser:      {name:'LÁSER',      dmg:34, rate:.28, speed:1500, spread:.01, pellets:1, ammo:16, col:'#ff50c8', len:40},
   // cuerpo a cuerpo: pegan más que cualquier arma de distancia y se conservan hasta morir
-  sable:      {name:'SABLE', melee:'spin',  dmg:80, rate:.75, dur:.42, range:86, ammo:Infinity, col:'#5ef0ff', len:58},
+  sable:      {name:'SABLE', melee:'spin',  dmg:55, rate:.75, dur:.42, range:86, ammo:Infinity, col:'#5ef0ff', len:58},
   bate:       {name:'BATE',  melee:'swing', dmg:95, rate:.6,  dur:.24, range:66, arc:1.25, push:240, ammo:Infinity, col:'#d29a5a', len:42},
 };
 const PICK_TYPES = ['escopeta','escopeta','metralleta','metralleta','rifle','laser','sable','bate'];
@@ -153,7 +157,7 @@ function placePickup(){
 }
 
 // ================= jugadores =================
-function mkPlayer(name,col,bot){ return {name,col,bot,x:0,y:0,vx:0,vy:0,ang:0,hp:100,weapon:'pistola',ammo:Infinity,cool:0,kills:0,deaths:0,dead:false,rt:0,path:null,pi:0,repath:0,aimErr:0,strafe:1,strafeT:0,seeT:0,blockT:0,lastSeen:null,hitT:0,flash:0,swingT:0,swingDur:0,swingStart:0,swingHit:null}; }
+function mkPlayer(name,col,bot){ return {name,col,bot,x:0,y:0,vx:0,vy:0,ang:0,hp:100,weapon:'pistola',ammo:Infinity,cool:0,kills:0,deaths:0,dead:false,rt:0,path:null,pi:0,repath:0,aimErr:0,strafe:1,strafeT:0,seeT:0,blockT:0,lastSeen:null,hitT:0,flash:0,sableT:0,sableHits:null,hurtT:99,swingT:0,swingDur:0,swingStart:0,swingHit:null}; }
 let players = null, me, bullets, feed, floaters, sparks, timeLeft, state = 'menu';
 function spawn(p){
   let best = null, bd = -1;
@@ -164,7 +168,7 @@ function spawn(p){
     md += Math.random()*150;
     if(md > bd){ bd = md; best = s; }
   }
-  Object.assign(p,{swingT:0,x:best.x,y:best.y,vx:0,vy:0,hp:100,dead:false,weapon:'pistola',ammo:Infinity,cool:.4,path:null,lastSeen:null});
+  Object.assign(p,{swingT:0,sableT:0,hurtT:99,x:best.x,y:best.y,vx:0,vy:0,hp:100,dead:false,weapon:'pistola',ammo:Infinity,cool:.4,path:null,lastSeen:null});
 }
 function newGame(){
   players = [
@@ -252,13 +256,13 @@ function assistTarget(p){
   return best;
 }
 function hurt(victim, dmg, attacker){
-  victim.hp -= dmg; victim.hitT = .12;
+  victim.hp -= dmg; victim.hitT = .12; victim.hurtT = 0;
   floaters.push({x:victim.x+14,y:victim.y-30,txt:'-'+dmg,t:.7,mine:attacker===me});
   if(victim.hp <= 0) kill(victim, attacker);
 }
 function shoot(p){
   const wp = WEAPONS[p.weapon];
-  if(p.cool > 0 || p.dead || p.swingT > 0) return;
+  if(p.cool > 0 || p.dead || p.swingT > 0 || wp.melee==='spin') return;
   if(wp.melee){
     p.cool = wp.rate * (p.bot ? 1.3 : 1);
     if(!p.bot && wp.melee==='swing'){ const t = assistTarget(p); if(t) p.ang = Math.atan2(t.y-p.y, t.x-p.x); }
@@ -276,6 +280,27 @@ function shoot(p){
   }
   p.flash = .06;
   if(p.ammo !== Infinity){ p.ammo--; if(p.ammo <= 0){ p.weapon='pistola'; p.ammo=Infinity; } }
+}
+function updateSable(p, dt){
+  if(p.weapon !== 'sable') return;
+  const wp = WEAPONS.sable;
+  p.sableT -= dt;
+  if(p.sableT <= 0){ p.weapon = 'pistola'; p.ammo = Infinity; p.sableT = 0; return; }
+  p.spinAng = (p.spinAng || p.ang) + SABLE_SPIN*dt;
+  p.ang = p.spinAng;
+  const dmg = Math.round(wp.dmg * (p.bot ? BOT_DMG : PLAYER_DMG));
+  const now = performance.now()/1000;
+  for(const q of players){
+    if(q===p || q.dead) continue;
+    const d = Math.hypot(q.x-p.x, q.y-p.y);
+    if(d > wp.range + R) continue;
+    if(now - (p.sableHits.get(q) || 0) < SABLE_HIT_CD) continue;
+    if(!los(p.x,p.y,q.x,q.y)) continue;
+    p.sableHits.set(q, now);
+    const a = Math.atan2(q.y-p.y, q.x-p.x);
+    for(let i=0;i<8;i++){ const sa=a+(Math.random()-.5)*1.4, sp=120+Math.random()*160; sparks.push({x:q.x-Math.cos(a)*R,y:q.y-Math.sin(a)*R,vx:Math.cos(sa)*sp,vy:Math.sin(sa)*sp,t:.25,col:wp.col}); }
+    hurt(q, dmg, p);
+  }
 }
 function updateSwing(p, dt){
   if(p.swingT <= 0) return;
@@ -341,8 +366,8 @@ function botThink(p, dt){
     const wpn = WEAPONS[p.weapon];
     let fwd, st = .8;
     if(wpn.melee){
-      if(td < wpn.range + R - 4 && p.seeT > .35 && (wpn.melee==='spin' || Math.abs(da) < .5)) shoot(p);
-      fwd = td > 40 ? 1 : 0; st = .25;
+      if(wpn.melee==='swing' && td < wpn.range + R - 4 && p.seeT > .35 && Math.abs(da) < .5) shoot(p);
+      fwd = wpn.melee==='spin' ? 1 : (td > 40 ? 1 : 0); st = wpn.melee==='spin' ? 0 : .25;
     } else {
       if(Math.abs(da) < .18 && p.seeT > .7) shoot(p);
       const ideal = p.weapon==='escopeta' ? 130 : p.weapon==='rifle' ? 450 : 280;
@@ -402,7 +427,10 @@ function update(dt){
     const ox = p.x, oy = p.y, want = Math.hypot(p.vx,p.vy)*dt;
     moveCircle(p, p.vx*dt, p.vy*dt);
     updateSwing(p, dt);
-    if(p.dead) continue;
+    updateSable(p, dt);
+    // recarga de vida
+    p.hurtT += dt;
+    if(p.hurtT > REGEN_DELAY && p.hp < 100) p.hp = Math.min(100, p.hp + REGEN_RATE*dt);
     if(p.bot){
       const got = Math.hypot(p.x-ox, p.y-oy);
       if(want > 1 && got < want*.35){ p.blockT += dt; } else p.blockT = 0;
@@ -412,6 +440,7 @@ function update(dt){
       const kk = pickups[i];
       if(Math.hypot(kk.x-p.x,kk.y-p.y) < 30){
         p.weapon = kk.w; p.ammo = WEAPONS[kk.w].ammo;
+        if(kk.w==='sable'){ p.sableT = SABLE_TIME; p.sableHits = new Map(); p.spinAng = p.ang; }
         pickups.splice(i,1);
         pickupTimers.push(PICKUP_RESPAWN[0] + Math.random()*(PICKUP_RESPAWN[1]-PICKUP_RESPAWN[0]));
         for(const q of players) if(q.bot && q.path) q.repath = Math.min(q.repath, .3);
@@ -500,8 +529,8 @@ function drawStick(p){
   ctx.lineCap='butt';
   if(wp.melee){
     const reach = 27 + wp.len;
-    if(p.swingT > 0){ // estela del golpe
-      const a1 = p.ang, a0 = wp.melee==='spin' ? p.ang - Math.min(2.4, (1 - p.swingT/p.swingDur)*Math.PI*2) : p.swingStart - wp.arc;
+    if(p.swingT > 0 || wp.melee==='spin'){ // estela del golpe
+      const a1 = p.ang, a0 = wp.melee==='spin' ? p.ang - 2.6 : p.swingStart - wp.arc;
       ctx.strokeStyle = wp.col + '55'; ctx.lineWidth = 22;
       ctx.beginPath(); a1 >= a0 ? ctx.arc(p.x,p.y,reach-12,a0,a1) : ctx.arc(p.x,p.y,reach-12,a1,a0); ctx.stroke();
     }
@@ -528,6 +557,7 @@ function drawStick(p){
   ctx.beginPath(); ctx.arc(p.x,p.y,18,0,7); ctx.fill(); ctx.stroke();
   ctx.font=font(12); ctx.textAlign='center'; ctx.fillStyle='#ebebeb';
   ctx.fillText(p.name, p.x, p.y-44);
+  if(p.weapon==='sable'){ ctx.fillStyle='#5ef0ff'; ctx.fillRect(p.x-22,p.y-30,44*p.sableT/SABLE_TIME,3); }
   ctx.fillStyle='#3c1414'; ctx.fillRect(p.x-22,p.y-36,44,5);
   ctx.fillStyle = p.hp>40 ? '#5adc5a' : '#f05a3c'; ctx.fillRect(p.x-22,p.y-36,44*Math.max(0,p.hp)/100,5);
 }
@@ -588,7 +618,7 @@ function drawHUD(){
     ctx.fillStyle='#3c1414'; rr(hw/2-110,80,130,14,5); ctx.fill();
     ctx.fillStyle='#5adc5a'; rr(hw/2-110,80,130*Math.max(0,me.hp)/100,14,5); ctx.fill();
     ctx.fillStyle=wp.col; ctx.font=font(13); ctx.textAlign='left';
-    ctx.fillText(wp.name+' '+(me.ammo===Infinity?'∞':me.ammo),hw/2+30,92);
+    ctx.fillText(wp.name+' '+(me.weapon==='sable'?Math.ceil(me.sableT)+'s':me.ammo===Infinity?'∞':me.ammo),hw/2+30,92);
     return;
   }
   panel(20,hh-90,330,70);
@@ -598,7 +628,7 @@ function drawHUD(){
   ctx.fillStyle='#142014'; ctx.font=font(15); ctx.textAlign='center'; ctx.fillText(Math.max(0,Math.ceil(me.hp)),182,hh-43);
   panel(hw-350,hh-90,330,70);
   ctx.textAlign='left'; ctx.fillStyle='#96a0af'; ctx.font=font(12); ctx.fillText(wp.name,hw-335,hh-68);
-  ctx.fillStyle='#fff'; ctx.font=font(30); ctx.fillText(me.ammo===Infinity?'∞':me.ammo,hw-335,hh-32);
+  ctx.fillStyle='#fff'; ctx.font=font(30); ctx.fillText(me.weapon==='sable'?Math.ceil(me.sableT)+'s':me.ammo===Infinity?'∞':me.ammo,hw-335,hh-32);
   ctx.fillStyle='#96a0af'; ctx.font=font(12,'normal'); ctx.fillText('WASD moverse · mouse apuntar · clic disparar',hw-265,hh-38);
 }
 function drawSticksScreen(){
@@ -676,8 +706,8 @@ function frame(now){
     drawOverlay('PALITOS: ARENA','Shooter de palitos visto desde arriba · vos contra 3 bots · 3 minutos', cy => {
       ctx.font=font(16,'normal'); ctx.fillStyle='#96a0af';
       const lines = isTouch
-        ? ['Joystick izquierdo: moverte','Joystick derecho: apuntar (si lo empujás a fondo, disparás)','Sable y bate: pegan fuerte de cerca. El sable te hace girar y le pega a todos alrededor','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas']
-        : ['WASD o flechas: moverte','Mouse: apuntar · Clic: disparar','Sable y bate: pegan fuerte de cerca. El sable te hace girar y le pega a todos alrededor','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas'];
+        ? ['Joystick izquierdo: moverte','Joystick derecho: apuntar (si lo empujás a fondo, disparás)','Sable: girás solo 10 seg pegándole a todo lo que toques · Bate: golpe fuerte que empuja','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas']
+        : ['WASD o flechas: moverte','Mouse: apuntar · Clic: disparar','Sable: girás solo 10 seg pegándole a todo lo que toques · Bate: golpe fuerte que empuja','Las armas aparecen en lugares al azar: pasá por encima para agarrarlas'];
       lines.forEach((l,i)=>ctx.fillText(l, hw/2, cy+i*28));
     });
   } else {
