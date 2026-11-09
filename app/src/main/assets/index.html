@@ -1485,9 +1485,15 @@ function frame(now){
   }
   ctx.setTransform(dpr,0,0,dpr,0,0);
   drawSticksScreen();
+  // cursor: oculto solo mientras jugás (salvo encima de los botones)
+  if(!isTouch){
+    const mx = mouse.sx/hs, my = mouse.sy/hs;
+    const overBtn = uiButtons.some(b => mx > b.x && mx < b.x+b.w && my > b.y && my < b.y+b.h);
+    const want = overBtn ? 'pointer' : (state === 'play' ? 'none' : 'default');
+    if(cv.style.cursor !== want) cv.style.cursor = want;
+  }
   requestAnimationFrame(frame);
 }
-cv.style.cursor = 'none';
 // botón "atrás" de Android (lo llama la app): pausa / vuelve / sale
 window.palitosAutoPause = () => { if(state === 'play'){ state = 'paused'; SFX.hum(false); sticks.move = sticks.aim = null; mouse.down = false; } };
 document.addEventListener('visibilitychange', () => { if(document.hidden) window.palitosAutoPause(); });
