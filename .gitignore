@@ -3,3 +3,6 @@ build/
 local.properties
 *.iml
 .idea/
+*.jks
+keystore_base64.txt
+CLAVE-DE-SUBIDA*

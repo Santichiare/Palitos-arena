@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_UPLOAD_KEY: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,18 +23,44 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.11.1"
 
-      - name: Compilar
+      - name: Número de versión
+        run: |
+          echo "VERSION_CODE=$((GITHUB_RUN_NUMBER + 100))" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Compilar APK (para instalar a mano)
         run: gradle assembleDebug --no-daemon
 
       - name: Renombrar APK
         run: cp app/build/outputs/apk/debug/app-debug.apk PalitosArena.apk
 
+      # ---- AAB firmado para Google Play (solo si cargaste la clave en los secrets) ----
+      - name: Preparar clave de subida
+        if: env.HAS_UPLOAD_KEY == 'true'
+        run: |
+          echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "UPLOAD_KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Compilar AAB para Google Play
+        if: env.HAS_UPLOAD_KEY == 'true'
+        env:
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: |
+          gradle bundleRelease --no-daemon
+          cp app/build/outputs/bundle/release/app-release.aab PalitosArena.aab
+          rm -f "$RUNNER_TEMP/upload.jks"
+
       - uses: actions/upload-artifact@v4
         with:
           name: PalitosArena
-          path: PalitosArena.apk
+          path: |
+            PalitosArena.apk
+            PalitosArena.aab
+          if-no-files-found: warn
 
       - name: Publicar en Releases
         uses: softprops/action-gh-release@v2
@@ -40,7 +68,12 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: Palitos Arena v${{ github.run_number }}
           body: |
-            Descargá **PalitosArena.apk** e instalalo en Android.
-            Si te pide permiso para "instalar apps de fuentes desconocidas", aceptalo.
-          files: PalitosArena.apk
+            **PalitosArena.apk**: descargalo e instalalo en Android. Si te pide permiso para "instalar apps de fuentes desconocidas", aceptalo.
+            **PalitosArena.aab**: el archivo para subir a Google Play Console (aparece solo si la clave de subida está cargada en GitHub).
+
+            Versión ${{ env.VERSION_NAME }} (código ${{ env.VERSION_CODE }})
+          files: |
+            PalitosArena.apk
+            PalitosArena.aab
+          fail_on_unmatched_files: false
           make_latest: true

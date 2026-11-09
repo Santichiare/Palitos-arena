@@ -2,25 +2,38 @@ plugins {
     id("com.android.application")
 }
 
+// La clave de subida a Google Play NO está en el repo: GitHub la arma desde los "secrets"
+val uploadKeystore: String? = System.getenv("UPLOAD_KEYSTORE_FILE")
+
 android {
     namespace = "com.palitos.arena"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.palitos.arena"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 11
-        versionName = "1.10"
+        targetSdk = 36   // Google Play exige Android 16 (API 36) para apps nuevas y actualizaciones
+        // GitHub pone el número de compilación, así cada subida a Play tiene un número mayor
+        versionCode = (System.getenv("VERSION_CODE") ?: "12").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.11"
     }
 
-    // Misma firma en todas las compilaciones, así cada APK nuevo se instala encima del anterior
     signingConfigs {
+        // Clave del APK para instalar a mano (pública en el repo: solo para pruebas entre amigos)
         create("palitos") {
             storeFile = file("palitos.keystore")
             storePassword = "palitos123"
             keyAlias = "palitos"
             keyPassword = "palitos123"
+        }
+        // Clave privada de subida a Google Play (viene de los secrets de GitHub)
+        if (uploadKeystore != null) {
+            create("upload") {
+                storeFile = file(uploadKeystore)
+                storePassword = System.getenv("UPLOAD_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("UPLOAD_KEY_ALIAS")
+                keyPassword = System.getenv("UPLOAD_KEY_PASSWORD")
+            }
         }
     }
 
@@ -30,7 +43,7 @@ android {
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("palitos")
+            signingConfig = if (uploadKeystore != null) signingConfigs.getByName("upload") else signingConfigs.getByName("palitos")
         }
     }
 
