@@ -50,8 +50,9 @@ jobs:
           UPLOAD_KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
           UPLOAD_KEY_PASSWORD: ${{ secrets.UPLOAD_KEY_PASSWORD }}
         run: |
-          gradle bundleRelease --no-daemon
+          gradle bundleRelease assembleRelease --no-daemon
           cp app/build/outputs/bundle/release/app-release.aab PalitosArena.aab
+          cp app/build/outputs/apk/release/app-release.apk PalitosArena-firmado.apk
           rm -f "$RUNNER_TEMP/upload.jks"
 
       - uses: actions/upload-artifact@v4
@@ -60,6 +61,7 @@ jobs:
           path: |
             PalitosArena.apk
             PalitosArena.aab
+            PalitosArena-firmado.apk
           if-no-files-found: warn
 
       - name: Publicar en Releases
@@ -69,11 +71,13 @@ jobs:
           name: Palitos Arena v${{ github.run_number }}
           body: |
             **PalitosArena.apk**: descargalo e instalalo en Android. Si te pide permiso para "instalar apps de fuentes desconocidas", aceptalo.
-            **PalitosArena.aab**: el archivo para subir a Google Play Console (aparece solo si la clave de subida está cargada en GitHub).
+            **PalitosArena.aab**: el archivo para subir a Google Play Console (firmado con tu clave de subida).
+            **PalitosArena-firmado.apk**: APK firmado con tu clave privada (versión "release").
 
             Versión ${{ env.VERSION_NAME }} (código ${{ env.VERSION_CODE }})
           files: |
             PalitosArena.apk
             PalitosArena.aab
+            PalitosArena-firmado.apk
           fail_on_unmatched_files: false
           make_latest: true
